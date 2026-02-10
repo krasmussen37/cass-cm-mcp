@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "cass-cm": {
+      "command": "cass-cm-mcp",
+      "args": [],
+      "env": {},
+      "description": "Session search (cass) + procedural memory/playbook (cm)"
+    }
+  }
+}

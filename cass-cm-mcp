@@ -1,0 +1,502 @@
+#!/usr/bin/env python3
+"""cass-cm-mcp - MCP server bridging cass and cm CLIs.
+
+A stdio MCP (Model Context Protocol) server that exposes cass (coding agent
+session search) and cm (cass memory system) as tools for Claude Code and
+other MCP-compatible AI coding agents.
+
+Requires:
+  - cass (https://github.com/caesarnine/coding_agent_session_search)
+  - cm   (https://github.com/caesarnine/cass_memory_system)
+  - Python 3.7+
+
+No external Python dependencies.
+"""
+
+__version__ = "0.1.0"
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+from datetime import datetime, timezone
+
+# ---------------------------------------------------------------------------
+# Binary resolution: env var override > PATH lookup
+# ---------------------------------------------------------------------------
+CASS_BIN = os.environ.get("CASS_BIN") or shutil.which("cass")
+CM_BIN = os.environ.get("CM_BIN") or shutil.which("cm")
+
+# ---------------------------------------------------------------------------
+# Tool definitions (MCP schema)
+# ---------------------------------------------------------------------------
+TOOLS = [
+    {
+        "name": "cass_search",
+        "description": (
+            "Search all coding agent session history (Claude Code, Codex, "
+            "Gemini CLI, etc). Returns ranked hits with brief abstracts "
+            "sorted by relevance. Scan the title/snippet/date to identify "
+            "promising hits, then use cass_expand on the best matches "
+            "(favor recent + relevant) to see full conversation context."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query - keywords, error messages, file paths, function names, concepts",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max results to return (default 10)",
+                    "default": 10,
+                },
+                "agent": {
+                    "type": "string",
+                    "description": "Filter by agent: claude_code, codex, gemini_cli, etc.",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "cass_expand",
+        "description": (
+            "Drill into a cass_search hit to see the full surrounding "
+            "conversation messages. Pass source_path and line_number from "
+            "a search hit. Returns the target message plus surrounding "
+            "context. Call multiple times to explore several promising hits."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "source_path": {
+                    "type": "string",
+                    "description": "The source_path from a cass_search hit",
+                },
+                "line_number": {
+                    "type": "integer",
+                    "description": "The line_number from a cass_search hit",
+                },
+                "context": {
+                    "type": "integer",
+                    "description": "Number of messages before/after to show (default 5)",
+                    "default": 5,
+                },
+            },
+            "required": ["source_path", "line_number"],
+        },
+    },
+    {
+        "name": "cass_timeline",
+        "description": (
+            "Show activity timeline across all coding agents. See when "
+            "sessions happened, which agents were active, and how much "
+            "work was done over a time period."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "since": {
+                    "type": "string",
+                    "description": "Start time - ISO date, 'today', 'yesterday', or 'Nd' for N days ago (e.g. '7d')",
+                    "default": "7d",
+                },
+                "agent": {
+                    "type": "string",
+                    "description": "Filter by agent: claude_code, codex, gemini_cli, etc.",
+                },
+            },
+        },
+    },
+    {
+        "name": "cass_stats",
+        "description": "Show statistics about the indexed session data - total sessions, messages, agents, and index health.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "cm_context",
+        "description": (
+            "Get procedural memory context for a task. Returns relevant "
+            "playbook rules (accumulated lessons learned) and matching "
+            "history snippets from past sessions. Use this BEFORE starting "
+            "work on any task to check for known patterns, past mistakes, "
+            "and relevant context."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "description": "Description of the task or problem you're working on",
+                }
+            },
+            "required": ["task"],
+        },
+    },
+    {
+        "name": "cm_playbook_list",
+        "description": "List all active playbook rules - the accumulated procedural knowledge extracted from past sessions. Rules have confidence scores and categories.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "cm_playbook_add",
+        "description": "Add a new rule to the playbook. Use this when you discover an important lesson during a session that should be remembered for future work.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": "The rule content - a concise, actionable lesson learned",
+                },
+                "category": {
+                    "type": "string",
+                    "description": "Category: debugging, testing, architecture, security, workflow, performance, etc.",
+                },
+            },
+            "required": ["content"],
+        },
+    },
+    {
+        "name": "cm_playbook_mark",
+        "description": (
+            "Give feedback on a playbook rule - mark it as helpful or "
+            "harmful. This is how rules mature and improve over time. "
+            "When cm_context returns rules that helped you solve a task, "
+            "mark them helpful. When rules were wrong or misleading, mark "
+            "them harmful."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "bullet_id": {
+                    "type": "string",
+                    "description": "The rule ID (e.g. 'b-mlft7ek0-07d4at')",
+                },
+                "helpful": {
+                    "type": "boolean",
+                    "description": "true = helpful (upvote), false = harmful (downvote)",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Optional reason (free text, or: caused_bug, wasted_time, contradicted_requirements, wrong_context, outdated)",
+                },
+            },
+            "required": ["bullet_id", "helpful"],
+        },
+    },
+    {
+        "name": "cm_reflect",
+        "description": (
+            "Process recent sessions to automatically extract new playbook "
+            "rules. Uses AI to analyze session history and distill patterns "
+            "into actionable rules. Can be slow (up to 2 min)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "days": {
+                    "type": "integer",
+                    "description": "Lookback days (default 7)",
+                    "default": 7,
+                },
+                "dry_run": {
+                    "type": "boolean",
+                    "description": "If true, show proposed rules without applying them",
+                    "default": False,
+                },
+            },
+        },
+    },
+    {
+        "name": "cm_doctor",
+        "description": "Check CASS memory system health - verifies cass index, cm config, playbook integrity, and integration status.",
+        "inputSchema": {"type": "object", "properties": {}},
+    },
+]
+
+# ---------------------------------------------------------------------------
+# CLI helpers
+# ---------------------------------------------------------------------------
+
+def run_command(args, timeout=30):
+    """Run a CLI command and return its output."""
+    try:
+        env = os.environ.copy()
+        env["NO_COLOR"] = "1"
+        env["CASS_MEMORY_NO_EMOJI"] = "1"
+        # Bridge common Gemini API key env var for cm commands
+        if "GEMINI_API_KEY" in env and "GOOGLE_GENERATIVE_AI_API_KEY" not in env:
+            env["GOOGLE_GENERATIVE_AI_API_KEY"] = env["GEMINI_API_KEY"]
+
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=env,
+        )
+        output = result.stdout
+        if result.returncode != 0 and result.stderr:
+            output = (output + "\nSTDERR: " + result.stderr).strip()
+        return output.strip() if output.strip() else "(no output)"
+    except subprocess.TimeoutExpired:
+        return "Error: Command timed out after {}s".format(timeout)
+    except Exception as e:
+        return "Error: {}".format(str(e))
+
+
+# ---------------------------------------------------------------------------
+# Tool dispatch
+# ---------------------------------------------------------------------------
+
+def handle_tool_call(name, arguments):
+    """Execute a tool and return its output."""
+
+    # -- cass tools ----------------------------------------------------------
+
+    if name == "cass_search":
+        args = [CASS_BIN, "search", arguments["query"], "--json"]
+        if arguments.get("limit"):
+            args.extend(["--limit", str(arguments["limit"])])
+        if arguments.get("agent"):
+            args.extend(["--agent", arguments["agent"]])
+        raw = run_command(args)
+
+        # Reshape: brief abstracts with readable dates, drop heavy content
+        try:
+            data = json.loads(raw)
+            brief_hits = []
+            for hit in data.get("hits", []):
+                ts = hit.get("created_at", 0)
+                date_str = ""
+                if ts:
+                    dt = datetime.fromtimestamp(ts / 1000, tz=timezone.utc)
+                    date_str = dt.strftime("%Y-%m-%d %H:%M UTC")
+                brief_hits.append({
+                    "score": round(hit.get("score", 0), 1),
+                    "title": hit.get("title", "")[:120],
+                    "snippet": hit.get("snippet", "")[:200],
+                    "date": date_str,
+                    "agent": hit.get("agent", ""),
+                    "workspace": hit.get("workspace", ""),
+                    "source_path": hit.get("source_path", ""),
+                    "line_number": hit.get("line_number", 0),
+                })
+            shaped = {
+                "query": data.get("query", ""),
+                "total_matches": data.get("total_matches", 0),
+                "showing": len(brief_hits),
+                "hits": brief_hits,
+                "tip": "Use cass_expand with source_path + line_number to see full conversation context for any hit.",
+            }
+            return json.dumps(shaped, indent=2)
+        except (json.JSONDecodeError, TypeError):
+            return raw
+
+    elif name == "cass_expand":
+        args = [
+            CASS_BIN, "expand", arguments["source_path"],
+            "--line", str(arguments["line_number"]),
+            "--context", str(arguments.get("context", 5)),
+            "--json",
+        ]
+        return run_command(args)
+
+    elif name == "cass_timeline":
+        args = [CASS_BIN, "timeline", "--json"]
+        since = arguments.get("since", "7d")
+        if since == "today":
+            args.append("--today")
+        else:
+            args.extend(["--since", since])
+        if arguments.get("agent"):
+            args.extend(["--agent", arguments["agent"]])
+        return run_command(args)
+
+    elif name == "cass_stats":
+        return run_command([CASS_BIN, "stats", "--json"])
+
+    # -- cm tools ------------------------------------------------------------
+
+    elif name == "cm_context":
+        return run_command([CM_BIN, "context", arguments["task"], "--json", "--no-color", "--no-emoji"])
+
+    elif name == "cm_playbook_list":
+        return run_command([CM_BIN, "playbook", "list", "--json", "--no-color", "--no-emoji"])
+
+    elif name == "cm_playbook_add":
+        args = [CM_BIN, "playbook", "add", arguments["content"], "--json", "--no-color", "--no-emoji"]
+        if arguments.get("category"):
+            args.extend(["--category", arguments["category"]])
+        return run_command(args)
+
+    elif name == "cm_playbook_mark":
+        feedback = "--helpful" if arguments.get("helpful") else "--harmful"
+        args = [CM_BIN, "mark", arguments["bullet_id"], feedback, "--json", "--no-color", "--no-emoji"]
+        if arguments.get("reason"):
+            args.extend(["--reason", arguments["reason"]])
+        return run_command(args)
+
+    elif name == "cm_reflect":
+        args = [CM_BIN, "reflect", "--json", "--no-color", "--no-emoji"]
+        days = arguments.get("days", 7)
+        args.extend(["--days", str(days)])
+        if arguments.get("dry_run"):
+            args.append("--dry-run")
+        return run_command(args, timeout=120)
+
+    elif name == "cm_doctor":
+        return run_command([CM_BIN, "doctor", "--json", "--no-color", "--no-emoji"])
+
+    else:
+        return "Unknown tool: {}".format(name)
+
+
+# ---------------------------------------------------------------------------
+# MCP protocol (JSON-RPC 2.0 over stdio)
+# ---------------------------------------------------------------------------
+
+def send_response(response):
+    """Send a JSON-RPC response to stdout."""
+    msg = json.dumps(response)
+    sys.stdout.write(msg + "\n")
+    sys.stdout.flush()
+
+
+def handle_message(msg):
+    """Process a single JSON-RPC message."""
+    method = msg.get("method")
+    msg_id = msg.get("id")
+
+    if method == "initialize":
+        send_response({
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "result": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {"tools": {}},
+                "serverInfo": {
+                    "name": "cass-cm-mcp",
+                    "version": __version__,
+                },
+            },
+        })
+
+    elif method == "notifications/initialized":
+        pass  # No response for notifications
+
+    elif method == "tools/list":
+        send_response({
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "result": {"tools": TOOLS},
+        })
+
+    elif method == "tools/call":
+        params = msg.get("params", {})
+        tool_name = params.get("name", "")
+        tool_args = params.get("arguments", {})
+
+        try:
+            output = handle_tool_call(tool_name, tool_args)
+            send_response({
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "result": {
+                    "content": [{"type": "text", "text": output}],
+                },
+            })
+        except Exception as e:
+            send_response({
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "result": {
+                    "content": [{"type": "text", "text": "Error: {}".format(str(e))}],
+                    "isError": True,
+                },
+            })
+
+    elif method == "ping":
+        send_response({"jsonrpc": "2.0", "id": msg_id, "result": {}})
+
+    elif msg_id is not None:
+        send_response({
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "error": {
+                "code": -32601,
+                "message": "Method not found: {}".format(method),
+            },
+        })
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
+def check_prerequisites():
+    """Verify cass and cm binaries are available. Exit with guidance if not."""
+    missing = []
+    if not CASS_BIN:
+        missing.append(
+            "  cass - not found. Install from: https://github.com/caesarnine/coding_agent_session_search"
+        )
+    if not CM_BIN:
+        missing.append(
+            "  cm   - not found. Install from: https://github.com/caesarnine/cass_memory_system"
+        )
+    if missing:
+        print("cass-cm-mcp: missing required binaries:", file=sys.stderr)
+        for m in missing:
+            print(m, file=sys.stderr)
+        print(
+            "\nSet CASS_BIN / CM_BIN environment variables or add them to PATH.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
+def main():
+    """Main entry point."""
+    # Handle CLI flags
+    if len(sys.argv) > 1:
+        arg = sys.argv[1]
+        if arg in ("--version", "-V"):
+            print("cass-cm-mcp {}".format(__version__))
+            sys.exit(0)
+        elif arg in ("--help", "-h"):
+            print("cass-cm-mcp {} - MCP server for cass + cm".format(__version__))
+            print()
+            print("Usage: cass-cm-mcp          Start MCP server (stdio)")
+            print("       cass-cm-mcp --version")
+            print("       cass-cm-mcp --help")
+            print()
+            print("Environment variables:")
+            print("  CASS_BIN   Path to cass binary (default: auto-detect from PATH)")
+            print("  CM_BIN     Path to cm binary (default: auto-detect from PATH)")
+            sys.exit(0)
+
+    check_prerequisites()
+
+    # MCP servers must not pollute stdout with stray output.
+    # Redirect stderr to devnull to suppress subprocess noise.
+    # Set CASS_CM_MCP_DEBUG=1 to keep stderr open for troubleshooting.
+    if not os.environ.get("CASS_CM_MCP_DEBUG"):
+        sys.stderr = open(os.devnull, "w")
+
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            msg = json.loads(line)
+            handle_message(msg)
+        except json.JSONDecodeError:
+            continue
+
+
+if __name__ == "__main__":
+    main()
