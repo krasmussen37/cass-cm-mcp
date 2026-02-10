@@ -6,8 +6,8 @@ session search) and cm (cass memory system) as tools for Claude Code and
 other MCP-compatible AI coding agents.
 
 Requires:
-  - cass (https://github.com/caesarnine/coding_agent_session_search)
-  - cm   (https://github.com/caesarnine/cass_memory_system)
+  - cass (https://github.com/Dicklesworthstone/coding_agent_session_search)
+  - cm   (https://github.com/Dicklesworthstone/cass_memory_system)
   - Python 3.7+
 
 No external Python dependencies.
@@ -442,11 +442,11 @@ def check_prerequisites():
     missing = []
     if not CASS_BIN:
         missing.append(
-            "  cass - not found. Install from: https://github.com/caesarnine/coding_agent_session_search"
+            "  cass - not found. Install from: https://github.com/Dicklesworthstone/coding_agent_session_search"
         )
     if not CM_BIN:
         missing.append(
-            "  cm   - not found. Install from: https://github.com/caesarnine/cass_memory_system"
+            "  cm   - not found. Install from: https://github.com/Dicklesworthstone/cass_memory_system"
         )
     if missing:
         print("cass-cm-mcp: missing required binaries:", file=sys.stderr)

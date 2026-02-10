@@ -9,8 +9,8 @@ Neither cass nor cm ships a working stdio MCP server today. This bridge fills th
 | Dependency | Version | Install |
 |------------|---------|---------|
 | Python | 3.7+ | Usually pre-installed |
-| [cass](https://github.com/caesarnine/coding_agent_session_search) | 0.1.x | See cass repo |
-| [cm](https://github.com/caesarnine/cass_memory_system) | 0.2.x | See cm repo |
+| [cass](https://github.com/Dicklesworthstone/coding_agent_session_search) | 0.1.x | See cass repo |
+| [cm](https://github.com/Dicklesworthstone/cass_memory_system) | 0.2.x | See cm repo |
 
 Both `cass` and `cm` must be on your `PATH` or specified via environment variables.
 

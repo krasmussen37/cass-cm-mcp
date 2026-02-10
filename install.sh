@@ -47,7 +47,7 @@ if command -v cass &>/dev/null; then
     cass_ver=$(cass --version 2>/dev/null || echo "unknown")
     info "cass ($cass_ver)"
 else
-    warn "cass not found - install from: https://github.com/caesarnine/coding_agent_session_search"
+    warn "cass not found - install from: https://github.com/Dicklesworthstone/coding_agent_session_search"
     errors=$((errors + 1))
 fi
 
@@ -56,7 +56,7 @@ if command -v cm &>/dev/null; then
     cm_ver=$(cm --version 2>/dev/null || echo "unknown")
     info "cm ($cm_ver)"
 else
-    warn "cm not found - install from: https://github.com/caesarnine/cass_memory_system"
+    warn "cm not found - install from: https://github.com/Dicklesworthstone/cass_memory_system"
     errors=$((errors + 1))
 fi
 
