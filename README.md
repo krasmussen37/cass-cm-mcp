@@ -1,6 +1,6 @@
 # cass-cm-mcp
 
-A stdio [MCP](https://modelcontextprotocol.io/) server that bridges **cass** (coding agent session search) and **cm** (cass memory system) into a single tool server for Claude Code and other MCP-compatible AI coding agents.
+A stdio [MCP](https://modelcontextprotocol.io/) server that bridges **cass** (coding agent session search) and **cm** (cass memory system) into a single tool server for Claude Code, Codex CLI, Gemini CLI, and other MCP-compatible AI coding agents.
 
 Neither cass nor cm ships a working stdio MCP server today. This bridge fills that gap with 10 tools, optimized search output, and zero external Python dependencies.
 
@@ -25,26 +25,37 @@ cd cass-cm-mcp
 The installer:
 1. Checks that Python 3.7+, `cass`, and `cm` are available
 2. Copies `cass-cm-mcp` to `~/.local/bin/`
-3. Optionally configures Claude Code (`~/.claude.json`)
+3. Prompts to configure each agent (Claude Code, Codex CLI, Gemini CLI)
 
-## Manual Install
+### Configure specific agents
+
+```bash
+./install.sh --configure-claude    # Claude Code only
+./install.sh --configure-codex     # Codex CLI only
+./install.sh --configure-gemini    # Gemini CLI only
+./install.sh --configure-all       # All three agents
+```
+
+### Manual Install
 
 ```bash
 cp cass-cm-mcp ~/.local/bin/
 chmod +x ~/.local/bin/cass-cm-mcp
 ```
 
-Then add to your `~/.claude.json` (see [Configuration](#claude-code-configuration)).
+Then configure your agents manually (see below).
 
-## Claude Code Configuration
+## Agent Configuration
 
-Add to your `~/.claude.json` under `mcpServers`:
+Each CLI agent stores MCP server config in a different format. The installer handles all three, but here's the manual setup for reference.
+
+### Claude Code (`~/.claude.json`)
 
 ```json
 {
   "mcpServers": {
     "cass-cm": {
-      "command": "cass-cm-mcp",
+      "command": "/home/you/.local/bin/cass-cm-mcp",
       "args": [],
       "env": {},
       "description": "Session search (cass) + procedural memory/playbook (cm)"
@@ -53,13 +64,48 @@ Add to your `~/.claude.json` under `mcpServers`:
 }
 ```
 
-If `cass-cm-mcp` is not on your PATH, use the full path:
+If `cass-cm-mcp` is on your PATH, you can use just `"command": "cass-cm-mcp"`.
 
-```json
-"command": "/home/you/.local/bin/cass-cm-mcp"
+See [`claude-code.json.example`](claude-code.json.example).
+
+### Codex CLI (`~/.codex/config.toml`)
+
+```toml
+[mcp_servers.cass-cm]
+command = "/home/you/.local/bin/cass-cm-mcp"
+args = []
 ```
 
-Restart Claude Code sessions after configuration changes.
+Codex uses TOML. Add this block anywhere in the file alongside your other `[mcp_servers.*]` entries.
+
+See [`codex-config.toml.example`](codex-config.toml.example).
+
+### Gemini CLI (`~/.gemini/settings.json`)
+
+```json
+{
+  "mcpServers": {
+    "cass-cm": {
+      "command": "/home/you/.local/bin/cass-cm-mcp",
+      "args": []
+    }
+  }
+}
+```
+
+Gemini uses JSON like Claude Code but does not use the `env` or `description` fields. Merge the `cass-cm` entry into your existing `mcpServers` object.
+
+See [`gemini-settings.json.example`](gemini-settings.json.example).
+
+### Config format summary
+
+| Agent | Config file | Format | MCP key |
+|-------|------------|--------|---------|
+| Claude Code | `~/.claude.json` | JSON | `mcpServers` |
+| Codex CLI | `~/.codex/config.toml` | TOML | `[mcp_servers.*]` |
+| Gemini CLI | `~/.gemini/settings.json` | JSON | `mcpServers` |
+
+Restart agent sessions after configuration changes.
 
 ## Tools
 

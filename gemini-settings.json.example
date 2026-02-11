@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "cass-cm": {
+      "command": "/home/you/.local/bin/cass-cm-mcp",
+      "args": []
+    }
+  }
+}
