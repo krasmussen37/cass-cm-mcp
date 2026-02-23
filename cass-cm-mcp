@@ -143,7 +143,16 @@ TOOLS = [
     },
     {
         "name": "cm_playbook_add",
-        "description": "Add a new rule to the playbook. Use this when you discover an important lesson during a session that should be remembered for future work.",
+        "description": (
+            "Add a new rule to the playbook. Use this when you discover "
+            "an important lesson during a session that should be "
+            "remembered for future work.\n\n"
+            "BEFORE ADDING: Always call cm_context first to check if a "
+            "rule on the same topic already exists. If one does, use "
+            "cm_playbook_mark to add feedback/context to the existing "
+            "rule rather than creating a duplicate. Only create a new "
+            "rule if no existing rule covers the topic."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -163,10 +172,23 @@ TOOLS = [
         "name": "cm_playbook_mark",
         "description": (
             "Give feedback on a playbook rule - mark it as helpful or "
-            "harmful. This is how rules mature and improve over time. "
-            "When cm_context returns rules that helped you solve a task, "
-            "mark them helpful. When rules were wrong or misleading, mark "
-            "them harmful."
+            "harmful. This is how rules mature (candidate -> proven) or "
+            "get deprioritized over time. Without feedback, rules stay as "
+            "unvalidated candidates forever.\n\n"
+            "WHEN TO MARK HELPFUL: Rule saved you time, prevented a "
+            "mistake, pointed you in the right direction, or was directly "
+            "applicable to your task.\n\n"
+            "WHEN TO MARK HARMFUL: Rule was wrong, outdated, misleading, "
+            "caused a bug, wasted your time, or only applies in a "
+            "narrower context than stated (e.g. correct for one CLI but "
+            "not another).\n\n"
+            "IMPORTANT: Always provide a reason with context. The reason "
+            "field is FREE TEXT - write a full explanation of why the rule "
+            "helped or hurt, not just a keyword. Include issue references, "
+            "cross-links to related rules, and scope clarifications "
+            "(e.g. 'correct for Claude/Codex but not Gemini due to "
+            "gemini-cli#20018'). These comments persist as the rule's "
+            "feedback history and help future agents understand nuance."
         ),
         "inputSchema": {
             "type": "object",
@@ -181,7 +203,17 @@ TOOLS = [
                 },
                 "reason": {
                     "type": "string",
-                    "description": "Optional reason (free text, or: caused_bug, wasted_time, contradicted_requirements, wrong_context, outdated)",
+                    "description": (
+                        "Free-text explanation of WHY the rule helped or "
+                        "hurt. Be specific: include what you were doing, "
+                        "what happened, and any scope limitations "
+                        "(e.g. 'works for X but not Y'). Cross-reference "
+                        "related rule IDs (b-xxx) or issue numbers. "
+                        "Common shorthand keywords (optional): caused_bug, "
+                        "wasted_time, contradicted_requirements, "
+                        "wrong_context, outdated — but prefer a full "
+                        "sentence when possible."
+                    ),
                 },
             },
             "required": ["bullet_id", "helpful"],
