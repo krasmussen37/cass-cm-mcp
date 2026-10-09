@@ -5,3 +5,11 @@ __pycache__/
 *.swp
 *.swo
 *~
+
+# ---- Cross-platform OS breadcrumbs (git-prep portability guard) ----
+# Windows marks downloads with an NTFS Zone.Identifier stream; copied into WSL it becomes a
+# literal `<file>:Zone.Identifier` path that Windows git refuses to check out.
+*:Zone.Identifier
+Thumbs.db
+[Dd]esktop.ini
+._*
